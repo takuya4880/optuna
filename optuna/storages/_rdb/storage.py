@@ -8,6 +8,8 @@ from datetime import timedelta
 import json
 import logging
 import os
+import random
+import time
 from typing import Any
 from typing import Callable
 from typing import Container
@@ -67,6 +69,7 @@ _logger = optuna.logging.get_logger(__name__)
 def _create_scoped_session(
     scoped_session: "sqlalchemy_orm.scoped_session",
     ignore_integrity_error: bool = False,
+    ignore_timeout_error: bool = False,
 ) -> Generator["sqlalchemy_orm.Session", None, None]:
     session = scoped_session()
     try:
@@ -89,6 +92,20 @@ def _create_scoped_session(
             "e.g. exceeding max length. "
         )
         raise optuna.exceptions.StorageInternalError(message) from e
+    except sqlalchemy_exc.OperationalError as e:
+        session.rollback()
+
+        # The following keystrings depend on the backend DB.
+        # If another issue about another DB is raised, the keystrings will be updated.
+        error_keystrings = ("1205", "Lock wait timeout exceeded; try restarting transaction")
+
+        if ignore_timeout_error and all([s in str(e.orig) for s in error_keystrings]):
+            _logger.debug(
+                "Ignoring {}. This happens due to a timeout. No exception is propagated here"
+                "because expecting a retry to be made by the calling function.".format(repr(e))
+            )
+        else:
+            raise
     except Exception:
         session.rollback()
         raise
@@ -446,8 +463,13 @@ class RDBStorage(BaseStorage, BaseHeartbeat):
 
         # Retry a couple of times. Deadlocks may occur in distributed environments.
         n_retries = 0
-        with _create_scoped_session(self.scoped_session) as session:
-            while True:
+        MAX_RETRIES = 5
+        while n_retries <= MAX_RETRIES:
+            # TODO(takizawa): Ponder if this exponential backoff is useful.
+            if n_retries != 0:
+                time.sleep((2**n_retries) * (1.0 + random.random()))
+            n_retries += 1
+            with _create_scoped_session(self.scoped_session, ignore_timeout_error=True) as session:
                 try:
                     # Ensure that that study exists.
                     #
@@ -455,37 +477,34 @@ class RDBStorage(BaseStorage, BaseHeartbeat):
                     # atomic operation. More precisely, the trial number computed in
                     # `_get_prepared_new_trial` is prone to race conditions without this lock.
                     models.StudyModel.find_or_raise_by_id(study_id, session, for_update=True)
-
                     trial = self._get_prepared_new_trial(study_id, template_trial, session)
+                    if template_trial:
+                        frozen = copy.deepcopy(template_trial)
+                        frozen.number = trial.number
+                        frozen.datetime_start = trial.datetime_start
+                        frozen._trial_id = trial.trial_id
+                    else:
+                        frozen = FrozenTrial(
+                            number=trial.number,
+                            state=trial.state,
+                            value=None,
+                            values=None,
+                            datetime_start=trial.datetime_start,
+                            datetime_complete=None,
+                            params={},
+                            distributions={},
+                            user_attrs={},
+                            system_attrs={},
+                            intermediate_values={},
+                            trial_id=trial.trial_id,
+                        )
                     break  # Successfully created trial.
                 except sqlalchemy_exc.OperationalError:
-                    if n_retries > 2:
-                        raise
+                    raise
 
-                n_retries += 1
+        assert n_retries <= MAX_RETRIES, "The _create_new_trial was repeatedly failed."
 
-            if template_trial:
-                frozen = copy.deepcopy(template_trial)
-                frozen.number = trial.number
-                frozen.datetime_start = trial.datetime_start
-                frozen._trial_id = trial.trial_id
-            else:
-                frozen = FrozenTrial(
-                    number=trial.number,
-                    state=trial.state,
-                    value=None,
-                    values=None,
-                    datetime_start=trial.datetime_start,
-                    datetime_complete=None,
-                    params={},
-                    distributions={},
-                    user_attrs={},
-                    system_attrs={},
-                    intermediate_values={},
-                    trial_id=trial.trial_id,
-                )
-
-            return frozen
+        return frozen
 
     def _get_prepared_new_trial(
         self,
@@ -981,6 +1000,8 @@ class RDBStorage(BaseStorage, BaseHeartbeat):
                 heartbeat = models.TrialHeartbeatModel(trial_id=trial_id)
                 session.add(heartbeat)
             else:
+                heartbeat = models.TrialHeartbeatModel.where_trial_id(trial_id, session, True)
+                assert heartbeat is not None
                 heartbeat.heartbeat = session.execute(sqlalchemy.func.now()).scalar()
 
     def _get_stale_trial_ids(self, study_id: int) -> List[int]:
