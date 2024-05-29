@@ -77,13 +77,17 @@ class StudyModel(BaseModel):
         return study
 
     @classmethod
-    def find_by_name(cls, study_name: str, session: orm.Session) -> Optional["StudyModel"]:
+    def find_by_name(
+        cls, study_name: str, session: orm.Session
+    ) -> Optional["StudyModel"]:
         study = session.query(cls).filter(cls.study_name == study_name).one_or_none()
 
         return study
 
     @classmethod
-    def find_or_raise_by_name(cls, study_name: str, session: orm.Session) -> "StudyModel":
+    def find_or_raise_by_name(
+        cls, study_name: str, session: orm.Session
+    ) -> "StudyModel":
         study = cls.find_by_name(study_name, session)
         if study is None:
             raise KeyError(NOT_FOUND_MSG)
@@ -104,7 +108,9 @@ class StudyDirectionModel(BaseModel):
     )
 
     @classmethod
-    def where_study_id(cls, study_id: int, session: orm.Session) -> List["StudyDirectionModel"]:
+    def where_study_id(
+        cls, study_id: int, session: orm.Session
+    ) -> List["StudyDirectionModel"]:
         return session.query(cls).filter(cls.study_id == study_id).all()
 
 
@@ -149,7 +155,8 @@ class StudySystemAttributeModel(BaseModel):
     value_json = _Column(Text())
 
     study = orm.relationship(
-        StudyModel, backref=orm.backref("system_attributes", cascade="all, delete-orphan")
+        StudyModel,
+        backref=orm.backref("system_attributes", cascade="all, delete-orphan"),
     )
 
     @classmethod
@@ -320,7 +327,8 @@ class TrialSystemAttributeModel(BaseModel):
     value_json = _Column(Text())
 
     trial = orm.relationship(
-        TrialModel, backref=orm.backref("system_attributes", cascade="all, delete-orphan")
+        TrialModel,
+        backref=orm.backref("system_attributes", cascade="all, delete-orphan"),
     )
 
     @classmethod
@@ -395,7 +403,9 @@ class TrialParamModel(BaseModel):
     def find_or_raise_by_trial_and_param_name(
         cls, trial: TrialModel, param_name: str, session: orm.Session
     ) -> "TrialParamModel":
-        param_distribution = cls.find_by_trial_and_param_name(trial, param_name, session)
+        param_distribution = cls.find_by_trial_and_param_name(
+            trial, param_name, session
+        )
 
         if param_distribution is None:
             raise KeyError(NOT_FOUND_MSG)
@@ -403,7 +413,9 @@ class TrialParamModel(BaseModel):
         return param_distribution
 
     @classmethod
-    def where_trial_id(cls, trial_id: int, session: orm.Session) -> List["TrialParamModel"]:
+    def where_trial_id(
+        cls, trial_id: int, session: orm.Session
+    ) -> List["TrialParamModel"]:
         trial_params = session.query(cls).filter(cls.trial_id == trial_id).all()
 
         return trial_params
@@ -440,7 +452,9 @@ class TrialValueModel(BaseModel):
             return (value, cls.TrialValueType.FINITE)
 
     @classmethod
-    def stored_repr_to_value(cls, value: Optional[float], float_type: TrialValueType) -> float:
+    def stored_repr_to_value(
+        cls, value: Optional[float], float_type: TrialValueType
+    ) -> float:
         if float_type == cls.TrialValueType.INF_POS:
             assert value is None
             return float("inf")
@@ -466,9 +480,14 @@ class TrialValueModel(BaseModel):
         return trial_value
 
     @classmethod
-    def where_trial_id(cls, trial_id: int, session: orm.Session) -> List["TrialValueModel"]:
+    def where_trial_id(
+        cls, trial_id: int, session: orm.Session
+    ) -> List["TrialValueModel"]:
         trial_values = (
-            session.query(cls).filter(cls.trial_id == trial_id).order_by(asc(cls.objective)).all()
+            session.query(cls)
+            .filter(cls.trial_id == trial_id)
+            .order_by(asc(cls.objective))
+            .all()
         )
 
         return trial_values
@@ -490,7 +509,8 @@ class TrialIntermediateValueModel(BaseModel):
     intermediate_value_type = _Column(Enum(TrialIntermediateValueType), nullable=False)
 
     trial = orm.relationship(
-        TrialModel, backref=orm.backref("intermediate_values", cascade="all, delete-orphan")
+        TrialModel,
+        backref=orm.backref("intermediate_values", cascade="all, delete-orphan"),
     )
 
     @classmethod
@@ -542,7 +562,9 @@ class TrialIntermediateValueModel(BaseModel):
     def where_trial_id(
         cls, trial_id: int, session: orm.Session
     ) -> List["TrialIntermediateValueModel"]:
-        trial_intermediate_values = session.query(cls).filter(cls.trial_id == trial_id).all()
+        trial_intermediate_values = (
+            session.query(cls).filter(cls.trial_id == trial_id).all()
+        )
 
         return trial_intermediate_values
 
@@ -560,9 +582,14 @@ class TrialHeartbeatModel(BaseModel):
 
     @classmethod
     def where_trial_id(
-        cls, trial_id: int, session: orm.Session
+        cls, trial_id: int, session: orm.Session, for_update: bool = False
     ) -> Optional["TrialHeartbeatModel"]:
-        return session.query(cls).filter(cls.trial_id == trial_id).one_or_none()
+        query = session.query(cls).filter(cls.trial_id == trial_id)
+
+        if for_update:
+            query = query.with_for_update()
+
+        return query.one_or_none()
 
 
 class VersionInfoModel(BaseModel):
