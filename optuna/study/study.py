@@ -1104,20 +1104,16 @@ class Study:
                 )
             )
         elif len(trial.values) == 1:
-            best_trial = self.best_trial
             trial_value: float | dict[str, float]
             if metric_names is None:
                 trial_value = trial.values[0]
             else:
                 trial_value = {metric_names[0]: trial.values[0]}
             _logger.info(
-                "Trial {} finished with value: {} and parameters: {}. "
-                "Best is trial {} with value: {}.".format(
+                "Trial {} finished with value: {} and parameters: {}. ".format(
                     trial.number,
                     trial_value,
                     trial.params,
-                    best_trial.number,
-                    best_trial.value,
                 )
             )
         else:
